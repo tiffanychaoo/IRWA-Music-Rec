@@ -321,6 +321,10 @@ def run_pipeline(job_id: str, spotify_token: str):
             if total_genre else {}
         )
 
+        #### Debug TODO
+        print(f"Top artists short_term: {[a['name'] for a in top_artists.get('short_term', [])][:10]}")
+        print(f"Spotify token used: {spotify_token[:20]}...")
+
         # Last.fm tags for known artists
         update("running", 35, "Fetching Last.fm tags…")
         all_artist_names = list({
