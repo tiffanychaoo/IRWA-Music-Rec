@@ -19,19 +19,19 @@
       background: white;
       border-radius: 8px;
       padding: 40px 48px;
-      max-width: 520px;
+      max-width: 540px;
       width: 100%;
       box-shadow: 0 2px 12px rgba(0,0,0,0.08);
     }
-    h1 { font-size: 1.5rem; margin-bottom: 8px; }
-    .subtitle { color: #666; font-size: 0.9rem; margin-bottom: 24px; }
+    h1 { font-size: 1.5rem; margin-bottom: 6px; }
+    .subtitle { color: #666; font-size: 0.88rem; margin-bottom: 24px; }
     .pipeline {
       background: #f7f7f7;
       border-radius: 6px;
       padding: 16px 20px;
-      margin-bottom: 24px;
+      margin-bottom: 20px;
     }
-    .pipeline p { font-size: 0.85rem; font-weight: 600; margin-bottom: 8px; color: #444; }
+    .pipeline p { font-size: 0.82rem; font-weight: 600; margin-bottom: 8px; color: #444; text-transform: uppercase; letter-spacing: 0.05em; }
     .pipeline ul { list-style: none; padding: 0; }
     .pipeline li {
       font-size: 0.82rem;
@@ -39,8 +39,21 @@
       padding: 4px 0;
       display: flex;
       gap: 8px;
+      border-bottom: 1px solid #eee;
     }
-    .pipeline li::before { content: "→"; color: #1db954; }
+    .pipeline li:last-child { border-bottom: none; }
+    .pipeline li::before { content: "→"; color: #1db954; flex-shrink: 0; }
+    .warning {
+      background: #fff8e6;
+      border: 1px solid #f0d080;
+      border-radius: 6px;
+      padding: 12px 16px;
+      margin-bottom: 20px;
+      font-size: 0.8rem;
+      color: #7a5a00;
+      line-height: 1.6;
+    }
+    .warning strong { display: block; margin-bottom: 4px; }
     .btn {
       display: inline-block;
       background: #1db954;
@@ -53,27 +66,39 @@
       transition: background 0.15s;
     }
     .btn:hover { background: #17a347; }
-    .note { margin-top: 16px; font-size: 0.75rem; color: #999; }
+    .note { margin-top: 12px; font-size: 0.75rem; color: #999; line-height: 1.6; }
   </style>
 </head>
 <body>
   <div class="card">
     <h1>Music Recommender</h1>
-    <p class="subtitle">Personalized artist recommendations from your Spotify history</p>
+    <p class="subtitle">Personalized artist recommendations using Spotify, Last.fm, and Bluesky</p>
 
     <div class="pipeline">
-      <p>How it works</p>
+      <p>Pipeline</p>
       <ul>
-        <li>Builds a taste profile from your genre + tag distributions (TF-IDF, cosine similarity)</li>
-        <li>Expands a two-hop similar-artist graph via Last.fm</li>
-        <li>Pulls cultural buzz from Bluesky posts and Album of the Year</li>
-        <li>Combines all three signals into a weighted final score</li>
-        <li>Runs a Naive Bayes classifier as an alternative ranking</li>
+        <li>Fetches your Spotify top artists and saved library (live, personal)</li>
+        <li>Builds a genre and tag profile from Last.fm artist tags weighted by playcount</li>
+        <li>Expands a two-hop similar-artist graph via Last.fm's similarity API</li>
+        <li>Scores candidates using TF-IDF cosine similarity against your tag centroid</li>
+        <li>Pulls cultural buzz from Bluesky post engagement with time decay</li>
+        <li>Combines taste, social, and buzz into a weighted final score (0.4 / 0.3 / 0.3)</li>
       </ul>
     </div>
 
+    <div class="warning">
+      <strong>⚠ Access restriction</strong>
+      This app is in Spotify development mode. Only accounts explicitly added to the allowlist
+      can retrieve personal listening data. If your account has not been added, the pipeline
+      will still run but recommendations will not reflect your personal taste — contact the
+      project team to request access.
+    </div>
+
     <a href="/login" class="btn">Connect with Spotify</a>
-    <p class="note">You'll be redirected to Spotify to authorize access to your listening history.</p>
+    <p class="note">
+      You will be redirected to Spotify to authorize read access to your top artists,
+      top tracks, and saved library. No data is stored after your session ends.
+    </p>
   </div>
 </body>
 </html>
