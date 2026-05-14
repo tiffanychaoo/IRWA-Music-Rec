@@ -1,5 +1,7 @@
+import hashlib
 import os
 import json
+import re
 import time
 import threading
 import uuid
@@ -11,14 +13,11 @@ import numpy as np
 import pylast
 import requests
 import spotipy
-from bs4 import BeautifulSoup
 from flask import (Flask, jsonify, redirect, render_template,
                    request, session, url_for)
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.metrics.pairwise import cosine_similarity
-from sklearn.naive_bayes import GaussianNB
 from spotipy.oauth2 import SpotifyOAuth
-from vaderSentiment.vaderSentiment import SentimentIntensityAnalyzer
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -26,7 +25,7 @@ load_dotenv()
 app = Flask(__name__)
 app.secret_key = os.getenv("FLASK_SECRET_KEY", os.urandom(24))
 
-# Config
+# CONFIG
 SPOTIFY_CLIENT_ID     = os.getenv("SPOTIFY_CLIENT_ID")
 SPOTIFY_CLIENT_SECRET = os.getenv("SPOTIFY_CLIENT_SECRET")
 SPOTIFY_REDIRECT_URI  = os.getenv("SPOTIFY_REDIRECT_URI", "http://localhost:5000/callback")
@@ -39,30 +38,36 @@ BLUESKY_PASSWORD      = os.getenv("BLUESKY_PASSWORD", "")
 SPOTIFY_SCOPE = "user-top-read user-library-read user-read-recently-played"
 TIME_RANGES   = ["short_term", "medium_term", "long_term"]
 
-SCORING_W1  = float(os.getenv("SCORING_W1", "0.5"))
-SCORING_W2  = float(os.getenv("SCORING_W2", "0.25"))
-SCORING_W3  = float(os.getenv("SCORING_W3", "0.25"))
-TASTE_BETA  = float(os.getenv("TASTE_BETA", "0.6"))
-TASTE_GAMMA = float(os.getenv("TASTE_GAMMA", "0.4"))
+SCORING_W1  = float(os.getenv("SCORING_W1", "0.4"))
+SCORING_W2  = float(os.getenv("SCORING_W2", "0.3"))
+SCORING_W3  = float(os.getenv("SCORING_W3", "0.3"))
+TASTE_BETA    = float(os.getenv("TASTE_BETA",    "0.45"))   # Genre
+TASTE_GAMMA   = float(os.getenv("TASTE_GAMMA",   "0.35"))   # Text/tags
+TASTE_DELTA   = float(os.getenv("TASTE_DELTA",   "0.1"))    # Duration
+TASTE_EPSILON = float(os.getenv("TASTE_EPSILON", "0.1"))    # Recency
+
+SOCIAL_SCORE_PEER_OVERLAP_WEIGHT = float(os.getenv("SOCIAL_SCORE_PEER_OVERLAP_WEIGHT", "1.0"))
+SOCIAL_SCORE_WEIGHTED_PEER_WEIGHT = float(os.getenv("SOCIAL_SCORE_WEIGHTED_PEER_WEIGHT", "1.0"))
 
 FANS_PER_ARTIST              = int(os.getenv("FANS_PER_ARTIST", "10"))
 PEER_GROUP_SEED_ARTIST_COUNT = int(os.getenv("PEER_GROUP_SEED_ARTIST_COUNT", "5"))
 MIN_PEER_SUPPORT             = int(os.getenv("MIN_PEER_SUPPORT_FOR_CANDIDATES", "2"))
 MAX_PEERS                    = int(os.getenv("MAX_PEERS", "100"))
 SECOND_HOP_DISCOUNT          = float(os.getenv("SECOND_HOP_MATCH_DISCOUNT", "0.5"))
-BLUESKY_POST_LIMIT           = int(os.getenv("BLUESKY_POST_LIMIT", "50"))
+BLUESKY_POST_LIMIT           = int(os.getenv("BLUESKY_POST_LIMIT", "500"))
+BLUESKY_PAGE_SIZE            = 100
 SHARED_ARTIST_QUERY_LIMIT    = int(os.getenv("SHARED_ARTIST_QUERY_LIMIT", "10"))
+CANDIDATE_BUZZ_LIMIT         = 75
+POSTS_PER_CANDIDATE          = 30
 
 LASTFM_BASE_URL     = "http://ws.audioscrobbler.com/2.0/"
 BLUESKY_BASE_URL    = "https://bsky.social/xrpc"
 CACHE_DIR           = Path("./lastfm_cache")
 CACHE_DIR.mkdir(exist_ok=True)
 
-# In-memory job store  { job_id: { status, progress, result, error } }
 JOBS: dict[str, dict] = {}
 
-# Helpers 
-
+# HELPERS
 def normalize_name(value):
     if value is None:
         return None
@@ -127,11 +132,9 @@ def exp_decay(dt_value, lambda_per_day=0.05):
     days = max((now - dt_value).total_seconds(), 0.0) / 86400.0
     return float(np.exp(-lambda_per_day * days))
 
-
-# Last.fm API (cached)
+# LAST.FM API (cached)
 
 def lastfm_get(method, **params):
-    import hashlib
     key_data = json.dumps({"method": method, "params": {k: str(v) for k, v in sorted(params.items())}}, sort_keys=True)
     digest = hashlib.sha1(key_data.encode()).hexdigest()[:12]
     cache_path = CACHE_DIR / f"{method.replace('.','_')}_{digest}.json"
@@ -185,10 +188,12 @@ def get_lastfm_tags(artist_name):
         if isinstance(item, dict) and item.get("name")
     ]
 
+# BLUESKYAPI
 
-# Bluesky API (session + search)
+bluesky_access_token = None
 
 def bluesky_auth():
+    global bluesky_access_token
     if not BLUESKY_HANDLE or not BLUESKY_PASSWORD:
         return None
     try:
@@ -198,34 +203,53 @@ def bluesky_auth():
             timeout=30,
         )
         r.raise_for_status()
-        return r.json().get("accessJwt")
+        token = r.json().get("accessJwt")
+        bluesky_access_token = token
+        return token
     except Exception:
         return None
 
-def search_bluesky(query, token, limit=50):
+def search_bluesky(query, token, limit=None):
+    global bluesky_access_token
     if not token:
         return []
+    if limit is None:
+        limit = BLUESKY_POST_LIMIT
+    limit = max(1, int(limit))
     posts = []
     cursor = None
     while len(posts) < limit:
-        params = {"q": query, "limit": min(100, limit - len(posts)), "sort": "latest"}
+        page_limit = min(BLUESKY_PAGE_SIZE, limit - len(posts))
+        params = {"q": query, "limit": page_limit, "sort": "latest"}
         if cursor:
             params["cursor"] = cursor
+        headers = {"Authorization": f"Bearer {token}"}
         try:
             r = requests.get(
                 f"{BLUESKY_BASE_URL}/app.bsky.feed.searchPosts",
-                headers={"Authorization": f"Bearer {token}"},
+                headers=headers,
                 params=params, timeout=30,
             )
+            if r.status_code == 401:
+                token = bluesky_auth()
+                bluesky_access_token = token
+                headers = {"Authorization": f"Bearer {token}"}
+                r = requests.get(
+                    f"{BLUESKY_BASE_URL}/app.bsky.feed.searchPosts",
+                    headers=headers,
+                    params=params, timeout=30,
+                )
             r.raise_for_status()
             data = r.json()
         except Exception:
             break
         for post in data.get("posts", []):
             record = post.get("record") or {}
-            text = re.sub(r"https?://\S+", "", record.get("text", "")).strip()
+            raw_text = record.get("text", "")
+            text = re.sub(r"https?://\S+", "", raw_text).strip()
             posts.append({
                 "text": text,
+                "raw_text": raw_text,
                 "like_count": post.get("likeCount", 0),
                 "repost_count": post.get("repostCount", 0),
                 "timestamp": record.get("createdAt"),
@@ -238,10 +262,7 @@ def search_bluesky(query, token, limit=50):
         time.sleep(0.5)
     return posts
 
-import re
-
-# Pipeline 
-
+# RUN PIPELINE
 def run_pipeline(job_id: str, spotify_token: str):
     job = JOBS[job_id]
 
@@ -251,7 +272,7 @@ def run_pipeline(job_id: str, spotify_token: str):
         job["message"]  = message
 
     try:
-        # Spotify data collection 
+        #  Spotify 
         update("running", 5, "Fetching Spotify top artists…")
         sp = spotipy.Spotify(auth=spotify_token)
 
@@ -278,6 +299,7 @@ def run_pipeline(job_id: str, spotify_token: str):
                     "name": t.get("name"),
                     "artist_ids": [a.get("id") for a in t.get("artists", [])],
                     "popularity": t.get("popularity"),
+                    "duration_ms": t.get("duration_ms"),
                 }
                 for t in resp.get("items", [])
             ]
@@ -304,7 +326,7 @@ def run_pipeline(job_id: str, spotify_token: str):
             if len(items) < 50:
                 break
 
-        #  Genre / tag distributions 
+        # Genre/tag distributions
         update("running", 30, "Building user profile…")
         genre_counter = Counter()
         unique_artists = {}
@@ -320,10 +342,6 @@ def run_pipeline(job_id: str, spotify_token: str):
             {g: c / total_genre for g, c in genre_counter.most_common()}
             if total_genre else {}
         )
-
-        #### Debug TODO
-        print(f"Top artists short_term: {[a['name'] for a in top_artists.get('short_term', [])][:10]}")
-        print(f"Spotify token used: {spotify_token[:20]}...")
 
         # Last.fm tags for known artists
         update("running", 35, "Fetching Last.fm tags…")
@@ -348,7 +366,7 @@ def run_pipeline(job_id: str, spotify_token: str):
             if total_tag else {}
         )
 
-        #  Known library set
+        # Known library set
         known_artist_names: set[str] = set()
         for artist_list in top_artists.values():
             for a in artist_list:
@@ -356,7 +374,7 @@ def run_pipeline(job_id: str, spotify_token: str):
                 if key:
                     known_artist_names.add(key)
 
-        #  Pipeline 2
+        # Pipeline 2: similar artist candidates
         update("running", 40, "Discovering similar artists…")
         seed_artists = []
         seen_seeds: set[str] = set()
@@ -436,35 +454,36 @@ def run_pipeline(job_id: str, spotify_token: str):
                 "social_score": 0.0,
             })
 
-        #  Bluesky 
+        # Bluesky buzz
         update("running", 60, "Fetching Bluesky buzz…")
         bsky_token = bluesky_auth()
-        candidate_names = [r["artist_name"] for r in candidate_rows[:SHARED_ARTIST_QUERY_LIMIT]]
+        top_candidates = sorted(candidate_rows, key=lambda r: r["social_score"], reverse=True)
+        candidate_names = [r["artist_name"] for r in top_candidates[:CANDIDATE_BUZZ_LIMIT]]
         bluesky_posts: dict[str, list] = {}
         for name in candidate_names:
-            posts = search_bluesky(name, bsky_token, limit=BLUESKY_POST_LIMIT)
-            if posts:
-                bluesky_posts[normalize_name(name)] = posts
+            try:
+                posts = search_bluesky(name, bsky_token, limit=POSTS_PER_CANDIDATE)
+                if posts:
+                    bluesky_posts[normalize_name(name)] = posts
+            except Exception:
+                pass
 
-        analyzer = SentimentIntensityAnalyzer()
+        analyzer = None
         buzz_raw: dict[str, float] = {}
-        sentiment_map: dict[str, float] = {}
         for key, posts in bluesky_posts.items():
-            engagement = sum(
-                (safe_float(p.get("like_count")) + safe_float(p.get("repost_count")))
-                * exp_decay(p.get("timestamp"))
-                for p in posts
-            )
-            buzz_raw[key] = engagement
-            texts = [p["text"] for p in posts if p.get("text")]
-            if texts:
-                scores = [analyzer.polarity_scores(t)["compound"] for t in texts]
-                sentiment_map[key] = float(np.mean(scores))
-            else:
-                sentiment_map[key] = 0.0
+            reference_dt = datetime.now(timezone.utc)
+            buzz_value = 0.0
+            for p in posts:
+                engagement = safe_float(p.get("like_count")) + safe_float(p.get("repost_count"))
+                post_time = p.get("timestamp")
+                decay = exp_decay(post_time, lambda_per_day=0.1) if post_time else 0.5
+                buzz_value += (1 + engagement) * decay
+            post_count = len(posts)
+            volume_bonus = np.log1p(post_count) / np.log1p(50)
+            buzz_raw[key] = buzz_value * (1 + 0.3 * volume_bonus)
         norm_buzz = normalize_score_lookup(buzz_raw)
 
-        #  Last.fm tags for candidates 
+        # Last.fm tags for candidates
         update("running", 68, "Fetching candidate tags…")
         candidate_tag_lookup: dict[str, list] = {}
         for row in candidate_rows[:50]:
@@ -473,6 +492,7 @@ def run_pipeline(job_id: str, spotify_token: str):
             tags = get_lastfm_tags(name)
             if tags:
                 candidate_tag_lookup[key] = [t["tag"] for t in tags]
+                # Also cache weight-based distribution for similarity
                 tw = {t["tag"]: float(t["weight"]) for t in tags if t.get("tag")}
                 tot = sum(tw.values())
                 row["tag_distribution"] = {t: w / tot for t, w in tw.items()} if tot else {}
@@ -480,14 +500,41 @@ def run_pipeline(job_id: str, spotify_token: str):
                 candidate_tag_lookup[key] = []
                 row["tag_distribution"] = {}
 
-        #  Taste score 
+        # Taste score
         update("running", 75, "Computing taste scores…")
+        # Artist genre lookup from top_artists
         artist_genre_lookup: dict[str, list] = {}
         for artist_list in top_artists.values():
             for a in artist_list:
                 key = normalize_name(a.get("name"))
                 if key and a.get("genres") and key not in artist_genre_lookup:
                     artist_genre_lookup[key] = [g.lower() for g in a["genres"]]
+
+        # Duration profile
+        durations = []
+        for track_list in top_tracks.values():
+            for t in track_list:
+                if t.get("duration_ms"):
+                    try:
+                        durations.append(float(t["duration_ms"]))
+                    except (TypeError, ValueError):
+                        pass
+        duration_centroid = float(np.mean(durations)) if durations else None
+        duration_std = float(np.std(durations, ddof=0)) if durations else None
+
+        # Release year profile
+        years = []
+        for item in saved_library:
+            date_str = item.get("album_release_date")
+            if date_str:
+                for fmt in ("%Y-%m-%d", "%Y-%m", "%Y"):
+                    try:
+                        years.append(int(datetime.strptime(date_str, fmt).year))
+                        break
+                    except ValueError:
+                        continue
+        release_year_mean = float(np.mean(years)) if years else None
+        release_year_std = float(np.std(years, ddof=1)) if len(years) > 1 else 0.0
 
         taste_raw: dict[str, float] = {}
         for row in candidate_rows:
@@ -503,8 +550,24 @@ def run_pipeline(job_id: str, spotify_token: str):
             if tag_dist and tag_distribution:
                 tag_sim = distribution_cosine_similarity(tag_dist, tag_distribution)
 
-            components = {k: v for k, v in {"genre": genre_sim, "tag": tag_sim}.items() if v is not None}
-            weights    = {"genre": TASTE_BETA, "tag": TASTE_GAMMA}
+            # Duration similarity
+            dur_sim = None
+            if duration_centroid is not None and duration_std and duration_std > 0:
+                candidate_dur = row.get("duration_ms")
+                if candidate_dur:
+                    dur_sim = float(np.exp(-0.5 * ((candidate_dur - duration_centroid) / duration_std) ** 2))
+
+            # Recency similarity
+            rec_sim = None
+            if release_year_mean is not None and release_year_std and release_year_std > 0:
+                candidate_year = row.get("release_year")
+                if candidate_year:
+                    rec_sim = float(np.exp(-0.5 * ((candidate_year - release_year_mean) / release_year_std) ** 2))
+
+            components = {k: v for k, v in {
+                "genre": genre_sim, "tag": tag_sim, "duration": dur_sim, "recency": rec_sim
+            }.items() if v is not None}
+            weights = {"genre": TASTE_BETA, "tag": TASTE_GAMMA, "duration": TASTE_DELTA, "recency": TASTE_EPSILON}
             if not components:
                 taste_raw[key] = 0.0
             else:
@@ -512,21 +575,25 @@ def run_pipeline(job_id: str, spotify_token: str):
                 taste_raw[key] = sum((weights[k] / wt) * components[k] for k in components)
         norm_taste = normalize_score_lookup(taste_raw, allow_negative=True)
 
-        #  Social score 
-        social_raw = {r["normalized_artist_name"]: r["social_score"] for r in candidate_rows}
+        # Social score
+        social_raw = {}
+        for r in candidate_rows:
+            key = r["normalized_artist_name"]
+            social_raw[key] = (
+                float(r["peer_overlap_ratio"]) ** SOCIAL_SCORE_PEER_OVERLAP_WEIGHT
+            ) * (
+                float(r["weighted_peer_score"]) ** SOCIAL_SCORE_WEIGHTED_PEER_WEIGHT
+            )
         norm_social = normalize_score_lookup(social_raw)
 
-        #  Buzz score 
+        # Buzz score
         buzz_score: dict[str, float] = {}
         for row in candidate_rows:
             key = row["normalized_artist_name"]
-            nb  = norm_buzz.get(key, 0.0)
-            sf  = 1.0 + (sentiment_map.get(key, 0.0) / 2.0)
-            sf  = float(np.clip(sf, 0.5, 1.5))
-            buzz_score[key] = nb * sf
+            buzz_score[key] = norm_buzz.get(key, 0.0)
         norm_buzz_final = normalize_score_lookup(buzz_score)
 
-        # ---- Final score --------------------------------------------------
+        # Final score 
         update("running", 82, "Computing final scores…")
         results = []
         for row in candidate_rows:
@@ -547,54 +614,16 @@ def run_pipeline(job_id: str, spotify_token: str):
 
         results.sort(key=lambda x: x["final_score"], reverse=True)
 
-        # Naive Bayes
-        update("running", 90, "Training Naive Bayes…")
-        bayes_scores: dict[str, float] = {}
-        try:
-            # Positive: user's known artists' tags
-            pos_docs, neg_docs = [], []
-            for name in all_artist_names:
-                tags = artist_tags.get(name, [])
-                text = " ".join(t["tag"] for t in tags if t.get("tag"))
-                if text.strip():
-                    pos_docs.append(text)
-            # Negative: candidates' tags
-            for row in candidate_rows:
-                key  = row["normalized_artist_name"]
-                text = " ".join(candidate_tag_lookup.get(key, []))
-                if text.strip():
-                    neg_docs.append(text)
-            if pos_docs and neg_docs:
-                n = min(len(pos_docs), len(neg_docs))
-                all_docs = pos_docs[:n] + neg_docs[:n]
-                labels   = [1] * n + [0] * n
-                vec = TfidfVectorizer(stop_words="english", max_features=50)
-                X   = vec.fit_transform(all_docs).toarray()
-                clf = GaussianNB()
-                clf.fit(X, labels)
-                # Score candidates
-                for row in candidate_rows:
-                    key  = row["normalized_artist_name"]
-                    text = " ".join(candidate_tag_lookup.get(key, []))
-                    xc   = vec.transform([text]).toarray()
-                    prob = float(clf.predict_proba(xc)[0, 1])
-                    bayes_scores[key] = round(prob, 4)
-        except Exception:
-            pass
+        update("running", 90, "Computing ablation…")
 
-        for r in results:
-            key = normalize_name(r["artist_name"])
-            r["bayes_score"] = bayes_scores.get(key)
-
-        update("running", 95, "Finalising…")
-
-        # ---- Ablation -----------------------------------------------------
+        # Ablation 
         ablation = []
         configs = [
-            {"label": "Taste only",    "w1": 1.0, "w2": 0.0, "w3": 0.0},
-            {"label": "Taste + Social","w1": 0.6, "w2": 0.4, "w3": 0.0},
-            {"label": "Taste + Buzz",  "w1": 0.6, "w2": 0.0, "w3": 0.4},
-            {"label": "All signals",   "w1": 0.5, "w2": 0.25,"w3": 0.25},
+            {"label": "Taste only",     "w1": 1.0, "w2": 0.0,  "w3": 0.0},
+            {"label": "Social only",    "w1": 0.0, "w2": 1.0,  "w3": 0.0},
+            {"label": "Buzz only",      "w1": 0.0, "w2": 0.0,  "w3": 1.0},
+            {"label": "All signals",    "w1": 0.4, "w2": 0.3,  "w3": 0.3},
+            {"label": "Buzz-Forward",   "w1": 0.2, "w2": 0.2,  "w3": 0.6},
         ]
         for cfg in configs:
             scored = sorted(
@@ -623,7 +652,7 @@ def run_pipeline(job_id: str, spotify_token: str):
         job["status"] = "error"
         job["error"]  = str(exc)
 
-# Spotify OAuth helpers
+# Spotify OAUTH helpers
 
 def make_spotify_oauth():
     return SpotifyOAuth(
@@ -635,7 +664,9 @@ def make_spotify_oauth():
         open_browser=False,
     )
 
+# ---------------------------------------------------------------------------
 # Routes
+# ---------------------------------------------------------------------------
 
 @app.route("/")
 def index():
