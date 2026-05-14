@@ -139,7 +139,7 @@
             <th>Taste</th>
             <th>Social</th>
             <th>Buzz</th>
-            <th>Bayes</th>
+            
             <th>Tags</th>
           </tr>
         </thead>
@@ -159,7 +159,6 @@
             <td class="score">{{ "%.3f"|format(rec.taste_score) }}</td>
             <td class="score">{{ "%.3f"|format(rec.social_score) }}</td>
             <td class="score">{{ "%.3f"|format(rec.buzz_score) }}</td>
-            <td class="score">{{ "%.2f"|format(rec.bayes_score) if rec.bayes_score is not none else "—" }}</td>
             <td class="tags">{{ rec.tags[:3]|join(", ") }}</td>
           </tr>
           {% endfor %}
