@@ -77,27 +77,26 @@
     <div class="pipeline">
       <p>Pipeline</p>
       <ul>
-        <li>Fetches your Spotify top artists and saved library (live, personal)</li>
-        <li>Builds a genre and tag profile from Last.fm artist tags weighted by playcount</li>
-        <li>Expands a two-hop similar-artist graph via Last.fm's similarity API</li>
-        <li>Scores candidates using TF-IDF cosine similarity against your tag centroid</li>
-        <li>Pulls cultural buzz from Bluesky post engagement with time decay</li>
-        <li>Combines taste, social, and buzz into a weighted final score (0.4 / 0.3 / 0.3)</li>
+        <li>Connects to your Spotify account to see what you've been listening to</li>
+        <li>Builds your personal music taste profile based on genres and descriptive tags</li>
+        <li>Finds candidate artists similar to ones you listen to then expands outward</li>
+        <li>Ranks new artists by how well they match your taste profile</li>
+        <li>Factors in which artists people are currently talking about on Bluesky</li>
+        <li>Combines all three signals into a single ranked recommendation list</li>
       </ul>
     </div>
 
     <div class="warning">
       <strong>⚠ Access restriction</strong>
-      This app is in Spotify development mode. Only accounts explicitly added to the allowlist
-      can retrieve personal listening data. If your account has not been added, the pipeline
-      will still run but recommendations will not reflect your personal taste — contact the
-      project team to request access.
+      This app is in Spotify development mode. Personal listening data can be retrieved only 
+      from accounts explicitly added to the allowlist. If your account has not been added, the pipeline
+      will still run but recommendations will not reflect your personal taste. 
     </div>
 
     <a href="/login" class="btn">Connect with Spotify</a>
     <p class="note">
       You will be redirected to Spotify to authorize read access to your top artists,
-      top tracks, and saved library. No data is stored after your session ends.
+      top tracks, and saved library.
     </p>
   </div>
 </body>
