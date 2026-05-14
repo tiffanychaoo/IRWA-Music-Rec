@@ -1,0 +1,525 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>SoundGraph — Your Recommendations</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Syne:wght@400;600;700;800&family=DM+Mono:wght@300;400;500&display=swap" rel="stylesheet">
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bg: #080c10;
+      --surface: #0f1519;
+      --border: #1e2d38;
+      --accent: #00e5a0;
+      --accent2: #0099ff;
+      --text: #e8f0f5;
+      --muted: #4a6070;
+      --card: #111c24;
+    }
+
+    body {
+      background: var(--bg);
+      color: var(--text);
+      font-family: 'DM Mono', monospace;
+      min-height: 100vh;
+    }
+
+    body::before {
+      content: '';
+      position: fixed;
+      inset: 0;
+      background-image:
+        linear-gradient(rgba(0,229,160,0.025) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(0,229,160,0.025) 1px, transparent 1px);
+      background-size: 60px 60px;
+      pointer-events: none;
+      z-index: 0;
+    }
+
+    .container {
+      position: relative;
+      z-index: 1;
+      max-width: 1100px;
+      margin: 0 auto;
+      padding: 0 2rem 4rem;
+    }
+
+    /* Nav */
+    nav {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 2rem 0;
+      border-bottom: 1px solid var(--border);
+      margin-bottom: 3rem;
+    }
+
+    .logo {
+      font-family: 'Syne', sans-serif;
+      font-weight: 800;
+      font-size: 1.3rem;
+      color: var(--accent);
+      text-decoration: none;
+    }
+    .logo span { color: var(--text); }
+
+    .nav-actions { display: flex; gap: 1rem; align-items: center; }
+
+    .btn-sm {
+      font-family: 'DM Mono', monospace;
+      font-size: 0.7rem;
+      letter-spacing: 0.08em;
+      padding: 0.5rem 1rem;
+      border-radius: 4px;
+      text-decoration: none;
+      border: 1px solid var(--border);
+      color: var(--muted);
+      background: none;
+      cursor: pointer;
+      transition: all 0.2s;
+    }
+    .btn-sm:hover { border-color: var(--accent); color: var(--accent); }
+
+    /* Stats strip */
+    .stats-strip {
+      display: flex;
+      gap: 2rem;
+      margin-bottom: 3rem;
+      padding: 1.5rem;
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      flex-wrap: wrap;
+    }
+
+    .stat { flex: 1; min-width: 120px; }
+    .stat-val {
+      font-family: 'Syne', sans-serif;
+      font-size: 1.8rem;
+      font-weight: 800;
+      color: var(--accent);
+      line-height: 1;
+      margin-bottom: 0.25rem;
+    }
+    .stat-label { font-size: 0.65rem; color: var(--muted); letter-spacing: 0.1em; text-transform: uppercase; }
+
+    /* Layout */
+    .layout {
+      display: grid;
+      grid-template-columns: 1fr 340px;
+      gap: 2rem;
+      align-items: start;
+    }
+
+    /* Section headers */
+    .section-header {
+      display: flex;
+      align-items: baseline;
+      justify-content: space-between;
+      margin-bottom: 1rem;
+    }
+
+    .section-title {
+      font-family: 'Syne', sans-serif;
+      font-weight: 700;
+      font-size: 1rem;
+    }
+
+    .section-sub { font-size: 0.65rem; color: var(--muted); }
+
+    /* Recommendation list */
+    .rec-list { display: flex; flex-direction: column; gap: 0.5rem; }
+
+    .rec-row {
+      display: grid;
+      grid-template-columns: 2rem 1fr auto;
+      align-items: center;
+      gap: 1rem;
+      padding: 1rem 1.25rem;
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      transition: border-color 0.2s, transform 0.15s;
+      animation: fade-up 0.4s ease both;
+    }
+
+    .rec-row:hover {
+      border-color: var(--accent);
+      transform: translateX(4px);
+    }
+
+    @keyframes fade-up {
+      from { opacity: 0; transform: translateY(12px); }
+      to   { opacity: 1; transform: translateY(0); }
+    }
+
+    .rec-rank {
+      font-family: 'Syne', sans-serif;
+      font-weight: 800;
+      font-size: 0.75rem;
+      color: var(--muted);
+      text-align: right;
+    }
+
+    .rec-main { overflow: hidden; }
+
+    .rec-artist {
+      font-family: 'Syne', sans-serif;
+      font-weight: 600;
+      font-size: 0.95rem;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      margin-bottom: 0.3rem;
+    }
+
+    .rec-tags {
+      display: flex;
+      gap: 0.4rem;
+      flex-wrap: wrap;
+    }
+
+    .tag {
+      font-size: 0.6rem;
+      padding: 0.2rem 0.5rem;
+      border-radius: 2px;
+      background: rgba(0,229,160,0.08);
+      color: var(--accent);
+      letter-spacing: 0.05em;
+    }
+
+    /* Score bars */
+    .rec-scores { display: flex; flex-direction: column; gap: 4px; min-width: 120px; }
+
+    .score-row { display: flex; align-items: center; gap: 0.5rem; }
+
+    .score-label {
+      font-size: 0.55rem;
+      color: var(--muted);
+      width: 1rem;
+      text-align: right;
+      flex-shrink: 0;
+    }
+
+    .score-bar-track {
+      flex: 1;
+      height: 4px;
+      background: var(--border);
+      border-radius: 2px;
+      overflow: hidden;
+    }
+
+    .score-bar-fill {
+      height: 100%;
+      border-radius: 2px;
+      transition: width 0.8s ease;
+    }
+
+    .fill-taste  { background: var(--accent); }
+    .fill-social { background: var(--accent2); }
+    .fill-buzz   { background: #ff6b6b; }
+    .fill-final  { background: linear-gradient(90deg, var(--accent2), var(--accent)); }
+
+    .score-val {
+      font-size: 0.6rem;
+      color: var(--muted);
+      width: 2.5rem;
+      text-align: right;
+      flex-shrink: 0;
+    }
+
+    /* Sidebar */
+    .sidebar { display: flex; flex-direction: column; gap: 1.5rem; }
+
+    .panel {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 1.25rem;
+    }
+
+    .panel-title {
+      font-family: 'Syne', sans-serif;
+      font-weight: 700;
+      font-size: 0.85rem;
+      margin-bottom: 1rem;
+      padding-bottom: 0.75rem;
+      border-bottom: 1px solid var(--border);
+    }
+
+    /* Genre/tag bars */
+    .dist-list { display: flex; flex-direction: column; gap: 0.6rem; }
+
+    .dist-row { display: flex; flex-direction: column; gap: 0.25rem; }
+
+    .dist-label-row {
+      display: flex;
+      justify-content: space-between;
+      font-size: 0.65rem;
+      color: var(--muted);
+    }
+
+    .dist-track {
+      height: 3px;
+      background: var(--border);
+      border-radius: 2px;
+      overflow: hidden;
+    }
+
+    .dist-fill {
+      height: 100%;
+      background: var(--accent);
+      border-radius: 2px;
+    }
+
+    /* Seed artists */
+    .seed-list { display: flex; flex-direction: column; gap: 0.4rem; }
+
+    .seed-item {
+      font-size: 0.75rem;
+      color: var(--text);
+      padding: 0.4rem 0.6rem;
+      background: rgba(0,229,160,0.05);
+      border-radius: 4px;
+      border-left: 2px solid var(--accent);
+    }
+
+    /* Ablation */
+    .ablation-table { width: 100%; border-collapse: collapse; }
+
+    .ablation-table th, .ablation-table td {
+      font-size: 0.65rem;
+      padding: 0.4rem 0.5rem;
+      text-align: left;
+      border-bottom: 1px solid var(--border);
+    }
+
+    .ablation-table th { color: var(--muted); font-weight: 400; }
+
+    .ablation-table td:first-child { color: var(--text); }
+
+    .ablation-top {
+      display: flex;
+      flex-direction: column;
+      gap: 0.4rem;
+      margin-top: 0.5rem;
+    }
+
+    .ablation-row {
+      display: flex;
+      align-items: baseline;
+      justify-content: space-between;
+    }
+
+    .ablation-cfg { font-size: 0.65rem; color: var(--muted); }
+    .ablation-name { font-size: 0.7rem; color: var(--text); }
+
+    /* Tabs */
+    .tabs { display: flex; gap: 0.5rem; margin-bottom: 1rem; }
+
+    .tab {
+      font-family: 'DM Mono', monospace;
+      font-size: 0.65rem;
+      letter-spacing: 0.05em;
+      padding: 0.4rem 0.8rem;
+      border-radius: 4px;
+      border: 1px solid var(--border);
+      background: none;
+      color: var(--muted);
+      cursor: pointer;
+      transition: all 0.2s;
+    }
+
+    .tab.active {
+      border-color: var(--accent);
+      color: var(--accent);
+      background: rgba(0,229,160,0.05);
+    }
+
+    .tab-panel { display: none; }
+    .tab-panel.active { display: block; }
+
+    /* Responsive */
+    @media (max-width: 800px) {
+      .layout { grid-template-columns: 1fr; }
+      .rec-row { grid-template-columns: 2rem 1fr; }
+      .rec-scores { display: none; }
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <nav>
+      <a href="/" class="logo">Sound<span>Graph</span></a>
+      <div class="nav-actions">
+        <a href="/login" class="btn-sm">↺ Re-run</a>
+        <a href="/api/results/{{ job_id }}" class="btn-sm" target="_blank">JSON ↗</a>
+      </div>
+    </nav>
+
+    <!-- Stats strip -->
+    <div class="stats-strip">
+      <div class="stat">
+        <div class="stat-val">{{ data.total_candidates }}</div>
+        <div class="stat-label">Candidates scored</div>
+      </div>
+      <div class="stat">
+        <div class="stat-val">{{ data.recommendations|length }}</div>
+        <div class="stat-label">Recommendations</div>
+      </div>
+      <div class="stat">
+        <div class="stat-val">{{ data.seed_artists|length }}</div>
+        <div class="stat-label">Seed artists</div>
+      </div>
+      <div class="stat">
+        <div class="stat-val">{{ data.genre_distribution|length }}</div>
+        <div class="stat-label">Genre dimensions</div>
+      </div>
+    </div>
+
+    <div class="layout">
+      <!-- Main: recommendations -->
+      <div>
+        <div class="section-header">
+          <div class="section-title">Recommendations</div>
+          <div class="section-sub">T = taste · S = social · B = buzz</div>
+        </div>
+
+        <div class="rec-list">
+          {% for rec in data.recommendations[:30] %}
+          <div class="rec-row" style="animation-delay: {{ loop.index0 * 0.03 }}s">
+            <div class="rec-rank">{{ loop.index }}</div>
+            <div class="rec-main">
+              <div class="rec-artist">{{ rec.artist_name }}</div>
+              <div class="rec-tags">
+                {% for tag in rec.tags[:4] %}
+                <span class="tag">{{ tag }}</span>
+                {% endfor %}
+                {% if rec.bayes_score is not none %}
+                <span class="tag" style="background:rgba(0,153,255,0.1);color:var(--accent2)">
+                  NB {{ "%.2f"|format(rec.bayes_score) }}
+                </span>
+                {% endif %}
+              </div>
+            </div>
+            <div class="rec-scores">
+              <div class="score-row">
+                <div class="score-label">T</div>
+                <div class="score-bar-track">
+                  <div class="score-bar-fill fill-taste" style="width:{{ (rec.taste_score * 100)|round }}%"></div>
+                </div>
+                <div class="score-val">{{ "%.3f"|format(rec.taste_score) }}</div>
+              </div>
+              <div class="score-row">
+                <div class="score-label">S</div>
+                <div class="score-bar-track">
+                  <div class="score-bar-fill fill-social" style="width:{{ (rec.social_score * 100)|round }}%"></div>
+                </div>
+                <div class="score-val">{{ "%.3f"|format(rec.social_score) }}</div>
+              </div>
+              <div class="score-row">
+                <div class="score-label">B</div>
+                <div class="score-bar-track">
+                  <div class="score-bar-fill fill-buzz" style="width:{{ (rec.buzz_score * 100)|round }}%"></div>
+                </div>
+                <div class="score-val">{{ "%.3f"|format(rec.buzz_score) }}</div>
+              </div>
+              <div class="score-row">
+                <div class="score-label" style="color:var(--accent)">Σ</div>
+                <div class="score-bar-track">
+                  <div class="score-bar-fill fill-final" style="width:{{ (rec.final_score * 100)|round }}%"></div>
+                </div>
+                <div class="score-val" style="color:var(--accent)">{{ "%.3f"|format(rec.final_score) }}</div>
+              </div>
+            </div>
+          </div>
+          {% endfor %}
+        </div>
+      </div>
+
+      <!-- Sidebar -->
+      <div class="sidebar">
+
+        <!-- Seed artists -->
+        <div class="panel">
+          <div class="panel-title">Seed Artists</div>
+          <div class="seed-list">
+            {% for artist in data.seed_artists %}
+            <div class="seed-item">{{ artist }}</div>
+            {% endfor %}
+          </div>
+        </div>
+
+        <!-- Profile distributions -->
+        <div class="panel">
+          <div class="panel-title">Taste Profile</div>
+          <div class="tabs">
+            <button class="tab active" onclick="switchTab(event,'genre')">Genres</button>
+            <button class="tab" onclick="switchTab(event,'tags')">Tags</button>
+          </div>
+
+          <div class="tab-panel active" id="tab-genre">
+            <div class="dist-list">
+              {% set max_g = data.genre_distribution.values()|list|max if data.genre_distribution else 1 %}
+              {% for genre, prob in data.genre_distribution.items() %}
+              <div class="dist-row">
+                <div class="dist-label-row">
+                  <span>{{ genre }}</span>
+                  <span>{{ "%.1f"|format(prob * 100) }}%</span>
+                </div>
+                <div class="dist-track">
+                  <div class="dist-fill" style="width:{{ ((prob / max_g) * 100)|round }}%"></div>
+                </div>
+              </div>
+              {% endfor %}
+            </div>
+          </div>
+
+          <div class="tab-panel" id="tab-tags">
+            <div class="dist-list">
+              {% set max_t = data.tag_distribution.values()|list|max if data.tag_distribution else 1 %}
+              {% for tag, prob in data.tag_distribution.items() %}
+              <div class="dist-row">
+                <div class="dist-label-row">
+                  <span>{{ tag }}</span>
+                  <span>{{ "%.1f"|format(prob * 100) }}%</span>
+                </div>
+                <div class="dist-track">
+                  <div class="dist-fill" style="width:{{ ((prob / max_t) * 100)|round }}%" style="background:var(--accent2)"></div>
+                </div>
+              </div>
+              {% endfor %}
+            </div>
+          </div>
+        </div>
+
+        <!-- Ablation -->
+        <div class="panel">
+          <div class="panel-title">Ablation — Top Pick per Config</div>
+          <div class="ablation-top">
+            {% for cfg in data.ablation %}
+            <div class="ablation-row">
+              <div class="ablation-cfg">{{ cfg.label }}</div>
+              <div class="ablation-name">{{ cfg.top10[0] if cfg.top10 else '—' }}</div>
+            </div>
+            {% endfor %}
+          </div>
+        </div>
+
+      </div>
+    </div>
+  </div>
+
+  <script>
+    function switchTab(e, id) {
+      document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+      document.querySelectorAll('.tab-panel').forEach(p => p.classList.remove('active'));
+      e.target.classList.add('active');
+      document.getElementById('tab-' + id).classList.add('active');
+    }
+  </script>
+</body>
+</html>
