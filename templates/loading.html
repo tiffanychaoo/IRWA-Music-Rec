@@ -19,94 +19,163 @@
       background: white;
       border-radius: 8px;
       padding: 40px 48px;
-      max-width: 480px;
+      max-width: 500px;
       width: 100%;
       box-shadow: 0 2px 12px rgba(0,0,0,0.08);
     }
-    h1 { font-size: 1.3rem; margin-bottom: 6px; }
-    .msg { color: #666; font-size: 0.85rem; margin: 16px 0 8px; min-height: 1.2em; }
-    .track {
-      width: 100%;
-      height: 8px;
-      background: #eee;
-      border-radius: 4px;
-      overflow: hidden;
-      margin-bottom: 6px;
+    h1 { font-size: 1.3rem; margin-bottom: 12px; }
+
+    /* Data source badges */
+    .badges { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 20px; }
+    .badge { font-size: 0.72rem; padding: 4px 10px; border-radius: 4px; border: 1px solid; line-height: 1.4; }
+    .badge-green  { background: #edfaf3; border-color: #b2e8cc; color: #1a7a3f; }
+    .badge-yellow { background: #fff8e6; border-color: #f0d080; color: #7a5a00; }
+    .badge-grey   { background: #f0f0f0; border-color: #ddd; color: #666; }
+
+    /* Warning box shown when Spotify data is empty */
+    .data-warning {
+      display: none;
+      background: #fff3f3;
+      border: 1px solid #f5c0c0;
+      border-radius: 6px;
+      padding: 12px 16px;
+      margin-bottom: 16px;
+      font-size: 0.8rem;
+      color: #8b0000;
+      line-height: 1.6;
     }
-    .fill {
-      height: 100%;
-      background: #1db954;
-      border-radius: 4px;
-      transition: width 0.5s ease;
-      width: 0%;
-    }
+    .data-warning strong { display: block; margin-bottom: 4px; }
+
+    .msg { color: #666; font-size: 0.85rem; margin-bottom: 8px; min-height: 1.2em; }
+    .track { width: 100%; height: 8px; background: #eee; border-radius: 4px; overflow: hidden; margin-bottom: 6px; }
+    .fill { height: 100%; background: #1db954; border-radius: 4px; transition: width 0.5s ease; width: 0%; }
     .pct { font-size: 0.8rem; color: #999; margin-bottom: 24px; }
+
     .steps { list-style: none; padding: 0; }
     .steps li {
       font-size: 0.82rem;
-      padding: 5px 0;
+      padding: 6px 0;
       color: #bbb;
       display: flex;
       gap: 8px;
-      align-items: center;
+      align-items: flex-start;
       border-bottom: 1px solid #f0f0f0;
       transition: color 0.3s;
+      line-height: 1.4;
     }
     .steps li:last-child { border-bottom: none; }
-    .steps li.done { color: #1db954; }
+    .steps li.done   { color: #1db954; }
     .steps li.active { color: #222; font-weight: 500; }
-    .dot {
-      width: 7px; height: 7px;
-      border-radius: 50%;
-      background: #ddd;
-      flex-shrink: 0;
-      transition: background 0.3s;
-    }
-    .done .dot { background: #1db954; }
+    .dot { width: 7px; height: 7px; border-radius: 50%; background: #ddd; flex-shrink: 0; margin-top: 4px; transition: background 0.3s; }
+    .done   .dot { background: #1db954; }
     .active .dot { background: #222; }
+
+    .step-sub { font-size: 0.75rem; color: #999; margin-top: 1px; }
   </style>
 </head>
 <body>
   <div class="card">
     <h1>Running pipeline…</h1>
+
+    <div class="badges">
+      <div class="badge badge-green" id="spotify-badge">✓ Spotify — awaiting data</div>
+      <div class="badge badge-yellow">⚠ Last.fm — fixed account ({{ lastfm_user }})</div>
+      <div class="badge badge-grey">~ Bluesky — live search</div>
+    </div>
+
+    <div class="data-warning" id="data-warning">
+      <strong>⚠ Your Spotify account is not authorized</strong>
+      Your account has not been added to the app's allowlist. The pipeline will still run
+      using the Last.fm artist graph and Bluesky buzz data, but recommendations will not
+      be personalized to your listening history. Contact the project team to request access.
+    </div>
+
     <p class="msg" id="msg">Starting up…</p>
     <div class="track"><div class="fill" id="fill"></div></div>
     <p class="pct" id="pct">0%</p>
 
     <ul class="steps">
-      <li id="s1"><div class="dot"></div>Fetching Spotify top artists &amp; tracks</li>
-      <li id="s2"><div class="dot"></div>Building genre &amp; tag profile</li>
-      <li id="s3"><div class="dot"></div>Last.fm similar-artist graph expansion</li>
-      <li id="s4"><div class="dot"></div>Bluesky buzz &amp; sentiment</li>
-      <li id="s5"><div class="dot"></div>Taste + social + buzz scoring</li>
-      <li id="s6"><div class="dot"></div>Naive Bayes classifier</li>
+      <li id="s1">
+        <div class="dot"></div>
+        <div>
+          Fetching Spotify top artists, top tracks &amp; saved library
+          <div class="step-sub">Personal listening data — requires allowlist authorization</div>
+        </div>
+      </li>
+      <li id="s2">
+        <div class="dot"></div>
+        <div>
+          Building genre &amp; tag profile
+          <div class="step-sub">Last.fm tags weighted by artist playcount → user taste centroid</div>
+        </div>
+      </li>
+      <li id="s3">
+        <div class="dot"></div>
+        <div>
+          Two-hop similar-artist graph expansion
+          <div class="step-sub">Last.fm artist.getSimilar seeded from your top artists</div>
+        </div>
+      </li>
+      <li id="s4">
+        <div class="dot"></div>
+        <div>
+          Fetching candidate tags &amp; Bluesky buzz
+          <div class="step-sub">Last.fm tags for candidates · Bluesky post engagement with time decay</div>
+        </div>
+      </li>
+      <li id="s5">
+        <div class="dot"></div>
+        <div>
+          Scoring: taste · social · buzz
+          <div class="step-sub">TF-IDF cosine similarity · peer overlap ratio · buzz normalization</div>
+        </div>
+      </li>
     </ul>
   </div>
 
   <script>
     const JOB_ID = "{{ job_id }}";
     const steps = [
-      { el: document.getElementById("s1"), at: 15 },
+      { el: document.getElementById("s1"), at: 18 },
       { el: document.getElementById("s2"), at: 35 },
-      { el: document.getElementById("s3"), at: 55 },
-      { el: document.getElementById("s4"), at: 68 },
-      { el: document.getElementById("s5"), at: 82 },
-      { el: document.getElementById("s6"), at: 92 },
+      { el: document.getElementById("s3"), at: 52 },
+      { el: document.getElementById("s4"), at: 70 },
+      { el: document.getElementById("s5"), at: 85 },
     ];
+
+    let spotifyChecked = false;
+
     function updateSteps(p) {
       steps.forEach(s => {
         if (p >= s.at + 10) s.el.className = "done";
         else if (p >= s.at - 5) s.el.className = "active";
       });
     }
+
     async function poll() {
       try {
         const res  = await fetch("/status/" + JOB_ID);
         const data = await res.json();
+
         document.getElementById("fill").style.width = data.progress + "%";
         document.getElementById("pct").textContent  = data.progress + "%";
         document.getElementById("msg").textContent   = data.message || "";
         updateSteps(data.progress);
+
+        // Once past the Spotify fetch step, check if data came back
+        if (!spotifyChecked && data.progress >= 25) {
+          spotifyChecked = true;
+          const statusRes = await fetch("/spotify-status/" + JOB_ID);
+          const statusData = await statusRes.json();
+          if (!statusData.has_spotify_data) {
+            document.getElementById("spotify-badge").className = "badge badge-yellow";
+            document.getElementById("spotify-badge").textContent = "⚠ Spotify — not authorized";
+            document.getElementById("data-warning").style.display = "block";
+          } else {
+            document.getElementById("spotify-badge").textContent = "✓ Spotify — personal data loaded";
+          }
+        }
+
         if (data.status === "done") {
           window.location.href = "/results/" + JOB_ID;
         } else if (data.status === "error") {
