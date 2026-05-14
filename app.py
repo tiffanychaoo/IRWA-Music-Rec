@@ -23,9 +23,9 @@ load_dotenv()
 app = Flask(__name__)
 app.secret_key = os.getenv("FLASK_SECRET_KEY", os.urandom(24))
 
-# ---------------------------------------------------------------------------
+ 
 # Config
-# ---------------------------------------------------------------------------
+ 
 SPOTIFY_CLIENT_ID     = os.getenv("SPOTIFY_CLIENT_ID")
 SPOTIFY_CLIENT_SECRET = os.getenv("SPOTIFY_CLIENT_SECRET")
 SPOTIFY_REDIRECT_URI  = os.getenv("SPOTIFY_REDIRECT_URI", "http://localhost:5000/callback")
@@ -66,9 +66,9 @@ URL_PATTERN = re.compile(r"https?://\S+")
 # In-memory job store
 JOBS: dict[str, dict] = {}
 
-# ---------------------------------------------------------------------------
+ 
 # Helpers
-# ---------------------------------------------------------------------------
+ 
 
 def normalize_name(value):
     if value is None:
@@ -119,9 +119,9 @@ def iter_nested_items(value):
         return items
     return []
 
-# ---------------------------------------------------------------------------
+ 
 # Last.fm API (cached)
-# ---------------------------------------------------------------------------
+ 
 
 def lastfm_get(method, **params):
     key_data = json.dumps({"method": method, "params": {k: str(v) for k, v in sorted(params.items())}}, sort_keys=True)
@@ -192,9 +192,9 @@ def get_lastfm_top_artists(username, limit=100):
             })
     return results
 
-# ---------------------------------------------------------------------------
+ 
 # Bluesky
-# ---------------------------------------------------------------------------
+ 
 
 def bluesky_auth():
     if not BLUESKY_HANDLE or not BLUESKY_PASSWORD:
@@ -248,9 +248,9 @@ def search_bluesky(query, token, limit=30):
         time.sleep(0.5)
     return posts
 
-# ---------------------------------------------------------------------------
+ 
 # Pipeline
-# ---------------------------------------------------------------------------
+ 
 
 def run_pipeline(job_id: str, spotify_token: str):
     job = JOBS[job_id]
@@ -278,6 +278,14 @@ def run_pipeline(job_id: str, spotify_token: str):
                 for a in resp.get("items", [])
             ]
         print(f"Top artists short_term: {[a['name'] for a in spotify_top_artists.get('short_term', [])][:10]}")
+
+        # Flag whether Spotify returned real data
+        has_spotify_data = any(
+            len(artists) > 0 for artists in spotify_top_artists.values()
+        )
+        job["has_spotify_data"] = has_spotify_data
+        if not has_spotify_data:
+            print("WARNING: Spotify returned no data — account likely not on allowlist")
 
         update("running", 12, "Fetching Spotify top tracks…")
         spotify_top_tracks = {}
@@ -649,9 +657,9 @@ def run_pipeline(job_id: str, spotify_token: str):
         job["status"] = "error"
         job["error"]  = str(exc)
 
-# ---------------------------------------------------------------------------
+ 
 # Spotify OAuth
-# ---------------------------------------------------------------------------
+ 
 
 def make_spotify_oauth():
     return SpotifyOAuth(
@@ -663,9 +671,9 @@ def make_spotify_oauth():
         open_browser=False,
     )
 
-# ---------------------------------------------------------------------------
+ 
 # Routes
-# ---------------------------------------------------------------------------
+ 
 
 @app.route("/")
 def index():
@@ -694,7 +702,9 @@ def callback():
 
 @app.route("/loading/<job_id>")
 def loading(job_id):
-    return render_template("loading.html", job_id=job_id)
+    lastfm_user = LASTFM_USERNAME or "not configured"
+    lastfm_live = False
+    return render_template("loading.html", job_id=job_id, lastfm_user=lastfm_user, lastfm_live=lastfm_live)
 
 @app.route("/status/<job_id>")
 def status(job_id):
@@ -702,6 +712,13 @@ def status(job_id):
     if not job:
         return jsonify({"status": "error", "error": "Job not found"}), 404
     return jsonify({"status": job["status"], "progress": job["progress"], "message": job["message"], "error": job.get("error")})
+
+@app.route("/spotify-status/<job_id>")
+def spotify_status(job_id):
+    job = JOBS.get(job_id)
+    if not job:
+        return jsonify({"has_spotify_data": False})
+    return jsonify({"has_spotify_data": job.get("has_spotify_data", None)})
 
 @app.route("/results/<job_id>")
 def results(job_id):
